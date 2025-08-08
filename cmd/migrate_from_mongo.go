@@ -9,10 +9,10 @@ import (
 	"syscall"
 
 	"github.com/pterm/pterm"
+	"github.com/qdrant/go-client/qdrant"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
-	"github.com/qdrant/go-client/qdrant"
 
 	"github.com/qdrant/migration/pkg/commons"
 )
@@ -146,6 +146,13 @@ func (r *MigrateFromMongoDBCmd) migrateData(ctx context.Context, sourceClient *m
 		findOptions := options.Find().
 			SetLimit(int64(batchSize)).
 			SetSkip(int64(skip))
+		if len(r.Fields) > 0 {
+			projection := bson.M{"_id": 1}
+			for _, field := range r.Fields {
+				projection[field] = 1
+			}
+			findOptions.SetProjection(projection)
+		}
 
 		cursor, err := collection.Find(ctx, map[string]any{}, findOptions)
 		if err != nil {
@@ -223,17 +230,11 @@ func (r *MigrateFromMongoDBCmd) migrateData(ctx context.Context, sourceClient *m
 		offsetCount += uint64(len(targetPoints))
 		offsetId := qdrant.NewIDNum(0)
 		err = commons.StoreStartOffset(ctx, r.Migration.OffsetsCollection, targetClient, r.MongoDB.Collection, offsetId, offsetCount)
-		findOptions := options.Find().
-			SetLimit(int64(batchSize)).
-			SetSkip(int64(skip))
-		if len(r.Fields) > 0 {
-			projection := bson.M{"_id": 1}
-			for _, field := range r.Fields {
-				projection[field] = 1
-			}
-			findOptions.SetProjection(projection)
+		if err != nil {
+			return fmt.Errorf("failed to store offset: %w", err)
 		}
-		cursor, err := collection.Find(ctx, map[string]any{}, findOptions)
+
+		bar.Add(len(targetPoints))
 		page++
 	}
 
