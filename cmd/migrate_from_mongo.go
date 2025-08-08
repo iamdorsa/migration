@@ -12,7 +12,6 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
-
 	"github.com/qdrant/go-client/qdrant"
 
 	"github.com/qdrant/migration/pkg/commons"
@@ -23,6 +22,7 @@ type MigrateFromMongoDBCmd struct {
 	Qdrant    commons.QdrantConfig    `embed:"" prefix:"qdrant."`
 	Migration commons.MigrationConfig `embed:"" prefix:"migration."`
 	IdField   string                  `prefix:"qdrant." help:"Field storing MongoDB IDs in Qdrant." default:"__id__"`
+	Fields    []string                `prefix:"mongodb." help:"Fields to select from MongoDB documents. If empty, select all fields."`
 
 	targetHost string
 	targetPort int
@@ -223,11 +223,17 @@ func (r *MigrateFromMongoDBCmd) migrateData(ctx context.Context, sourceClient *m
 		offsetCount += uint64(len(targetPoints))
 		offsetId := qdrant.NewIDNum(0)
 		err = commons.StoreStartOffset(ctx, r.Migration.OffsetsCollection, targetClient, r.MongoDB.Collection, offsetId, offsetCount)
-		if err != nil {
-			return fmt.Errorf("failed to store offset: %w", err)
+		findOptions := options.Find().
+			SetLimit(int64(batchSize)).
+			SetSkip(int64(skip))
+		if len(r.Fields) > 0 {
+			projection := bson.M{"_id": 1}
+			for _, field := range r.Fields {
+				projection[field] = 1
+			}
+			findOptions.SetProjection(projection)
 		}
-
-		bar.Add(len(targetPoints))
+		cursor, err := collection.Find(ctx, map[string]any{}, findOptions)
 		page++
 	}
 
